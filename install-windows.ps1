@@ -1,47 +1,56 @@
-# JTech Panel - Windows Auto Installer
+# ================================
+# JTech Panel Installer (Windows)
+# ================================
 
-param(
-    [Parameter(Mandatory=$true)]
-    [string]$token
-)
-
-function install-connector {
-    param([string]$token)
-
-    if (-not $token) { 
-        Write-Error "Token cluster lu mana Bre? Pake -token <TOKEN>"
-        return 
-    }
-
-    $installDir = "$env:ProgramFiles\cloudflared"
-    $path = "$installDir\cloudflared.exe"
-
-    # 1. Bikin folder sistem kalau belum ada
-    if (!(Test-Path $installDir)) {
-        New-Item -ItemType Directory -Force -Path $installDir | Out-Null
-    }
-
-    # 2. Cek apakah cloudflared sudah terinstall
-    if (Test-Path $path) {
-        Write-Host "Cloudflared sudah ada, skip download. Langsung gass!" -ForegroundColor Yellow
-    } else {
-        Write-Host "Gass download cloudflared terbaru dari GitHub..." -ForegroundColor Cyan
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        $url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
-        Invoke-WebRequest -Uri $url -OutFile $path -UseBasicParsing
-    }
-
-    Write-Host "Memasang service JTech Connector..." -ForegroundColor Cyan
-    
-    if (Get-Service "cloudflared" -ErrorAction SilentlyContinue) {
-        & $path service uninstall | Out-Null
-    }
-
-    & $path service install $token
-
-    Write-Host "----------------------------------------" -ForegroundColor Green
-    Write-Host "Mantap Bre! Connector sudah jalan di background."
+# 🔥 Detect jika dijalankan dari CMD
+if (-not $PSVersionTable) {
+    Write-Host "Re-launching in PowerShell..." -ForegroundColor Yellow
+    powershell -ExecutionPolicy Bypass -File "%~f0"
+    exit
 }
 
-# panggil function
-install-connector -token $token
+# 🔒 Force TLS 1.2 (hindari error download)
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+# 🧠 Config
+$repoUrl = "https://raw.githubusercontent.com/jauharimtikhan/cdn-jtech-panel/main"
+$installScript = "$env:TEMP\jtech-install.ps1"
+
+Write-Host "=====================================" -ForegroundColor Cyan
+Write-Host " JTech Panel Installer" -ForegroundColor Cyan
+Write-Host "=====================================" -ForegroundColor Cyan
+
+# ⚠️ Confirm user intent (anti-malware flag)
+$confirm = Read-Host "Do you want to continue installation? (y/n)"
+if ($confirm -ne "y") {
+    Write-Host "Installation cancelled."
+    exit
+}
+
+try {
+    Write-Host "Downloading installer..." -ForegroundColor Yellow
+
+    Invoke-WebRequest -Uri "$repoUrl/install-core.ps1" -OutFile $installScript -UseBasicParsing
+
+    if (-not (Test-Path $installScript)) {
+        throw "Download failed"
+    }
+
+    Write-Host "Download complete." -ForegroundColor Green
+
+    # 🔥 Run script (NO iex)
+    Write-Host "Running installer..." -ForegroundColor Yellow
+    powershell -ExecutionPolicy Bypass -File $installScript
+
+    Write-Host "Installation finished." -ForegroundColor Green
+}
+catch {
+    Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
+    exit 1
+}
+finally {
+    # 🧹 Cleanup
+    if (Test-Path $installScript) {
+        Remove-Item $installScript -Force
+    }
+}
