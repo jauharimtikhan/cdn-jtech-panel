@@ -14,7 +14,7 @@ if (-not $PSVersionTable) {
 
 # 🧠 Config
 $repoUrl = "https://raw.githubusercontent.com/jauharimtikhan/cdn-jtech-panel/main"
-$installScript = "$env:TEMP\jtech-install.ps1"
+$installScript = "$env:TEMP\intall-windows.ps1"
 
 Write-Host "=====================================" -ForegroundColor Cyan
 Write-Host " JTech Panel Installer" -ForegroundColor Cyan
@@ -30,7 +30,7 @@ if ($confirm -ne "y") {
 try {
     Write-Host "Downloading installer..." -ForegroundColor Yellow
 
-    Invoke-WebRequest -Uri "$repoUrl/install-core.ps1" -OutFile $installScript -UseBasicParsing
+    Invoke-WebRequest -Uri "$repoUrl/install-windows.ps1" -OutFile $installScript -UseBasicParsing
 
     if (-not (Test-Path $installScript)) {
         throw "Download failed"
