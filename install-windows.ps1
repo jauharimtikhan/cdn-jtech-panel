@@ -14,7 +14,9 @@ if (-not $PSVersionTable) {
 
 # 🧠 Config
 $repoUrl = "https://raw.githubusercontent.com/jauharimtikhan/cdn-jtech-panel/main"
-$installScript = "$env:TEMP\intall-windows.ps1"
+$installScript = "$env:TEMP\install-windows.ps1"
+$fileName = "install-core.ps1"
+$downloadUrl = "$repoUrl/$fileName"
 
 Write-Host "=====================================" -ForegroundColor Cyan
 Write-Host " JTech Panel Installer" -ForegroundColor Cyan
@@ -28,7 +30,7 @@ if ($confirm -ne "y") {
 }
 
 try {
-    Write-Host "Downloading installer..." -ForegroundColor Yellow
+    Write-Host "Downloading from: $downloadUrl" -ForegroundColor Cyan
 
     Invoke-WebRequest -Uri "$repoUrl/install-windows.ps1" -OutFile $installScript -UseBasicParsing
 
@@ -45,7 +47,14 @@ try {
     Write-Host "Installation finished." -ForegroundColor Green
 }
 catch {
-    Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
+     Write-Host "❌ Download failed!" -ForegroundColor Red
+    Write-Host "URL: $downloadUrl" -ForegroundColor Yellow
+    Write-Host "Reason: $($_.Exception.Message)" -ForegroundColor Red
+
+    Write-Host "`n👉 Fix kemungkinan:" -ForegroundColor Cyan
+    Write-Host "- Cek nama file di repo" 
+    Write-Host "- Cek branch (main/master)"
+    Write-Host "- Cek path file"
     exit 1
 }
 finally {
