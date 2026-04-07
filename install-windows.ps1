@@ -20,9 +20,7 @@ if (-not $PSVersionTable) {
 # ================================
 # 🔥 CHECK ADMIN
 # ================================
-$isAdmin = ([Security.Principal.WindowsPrincipal] `
-    [Security.Principal.WindowsIdentity]::GetCurrent()
-).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
 if (-not $isAdmin) {
     Write-Host "❌ Harus dijalankan sebagai Administrator!" -ForegroundColor Red
