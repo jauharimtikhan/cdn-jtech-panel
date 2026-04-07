@@ -15,7 +15,7 @@ if (-not $PSVersionTable) {
 # 🧠 Config
 $repoUrl = "https://raw.githubusercontent.com/jauharimtikhan/cdn-jtech-panel/main"
 $installScript = "$env:TEMP\install-windows.ps1"
-$fileName = "install-core.ps1"
+$fileName = "install-windows.ps1"
 $downloadUrl = "$repoUrl/$fileName"
 
 Write-Host "=====================================" -ForegroundColor Cyan
