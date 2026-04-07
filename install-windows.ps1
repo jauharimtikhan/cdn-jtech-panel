@@ -2,64 +2,91 @@
 # JTech Panel Installer (Windows)
 # ================================
 
-# 🔥 Detect jika dijalankan dari CMD
+# 🔥 Relaunch jika dari CMD
 if (-not $PSVersionTable) {
     Write-Host "Re-launching in PowerShell..." -ForegroundColor Yellow
     powershell -ExecutionPolicy Bypass -File "%~f0"
     exit
 }
 
-# 🔒 Force TLS 1.2 (hindari error download)
+# 🔒 TLS fix
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-
-# 🧠 Config
-$repoUrl = "https://raw.githubusercontent.com/jauharimtikhan/cdn-jtech-panel/main"
-$installScript = "$env:TEMP\install-windows.ps1"
-$fileName = "install-windows.ps1"
-$downloadUrl = "$repoUrl/$fileName"
 
 Write-Host "=====================================" -ForegroundColor Cyan
 Write-Host " JTech Panel Installer" -ForegroundColor Cyan
 Write-Host "=====================================" -ForegroundColor Cyan
 
-# ⚠️ Confirm user intent (anti-malware flag)
+# ⚠️ Confirm
 $confirm = Read-Host "Do you want to continue installation? (y/n)"
 if ($confirm -ne "y") {
     Write-Host "Installation cancelled."
     exit
 }
 
-try {
-    Write-Host "Downloading from: $downloadUrl" -ForegroundColor Cyan
+# ================================
+# 🔍 CHECK CLOUDLFARED
+# ================================
 
-    Invoke-WebRequest -Uri "$repoUrl/install-windows.ps1" -OutFile $installScript -UseBasicParsing
+$cloudflaredPath = "$env:ProgramFiles\cloudflared\cloudflared.exe"
 
-    if (-not (Test-Path $installScript)) {
-        throw "Download failed"
-    }
-
-    Write-Host "Download complete." -ForegroundColor Green
-
-    # 🔥 Run script (NO iex)
-    Write-Host "Running installer..." -ForegroundColor Yellow
-    powershell -ExecutionPolicy Bypass -File $installScript
-
-    Write-Host "Installation finished." -ForegroundColor Green
-}
-catch {
-     Write-Host "❌ Download failed!" -ForegroundColor Red
-    Write-Host "URL: $downloadUrl" -ForegroundColor Yellow
-    Write-Host "Reason: $($_.Exception.Message)" -ForegroundColor Red
-
-    Write-Host "`n👉 Fix kemungkinan:" -ForegroundColor Cyan
-    Write-Host "- Cek nama file di repo" 
-    Write-Host "- Cek branch (main/master)"
-    Write-Host "- Cek path file"
+if (-not (Test-Path $cloudflaredPath)) {
+    Write-Host "❌ cloudflared not found!" -ForegroundColor Red
+    Write-Host "Please install cloudflared first:" -ForegroundColor Yellow
+    Write-Host "https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/" -ForegroundColor Cyan
     exit 1
 }
-finally {
-    # 🧹 Cleanup
-    if (Test-Path $installScript) {
-        Remove-Item $installScript -Force
+
+Write-Host "✅ cloudflared found at: $cloudflaredPath" -ForegroundColor Green
+
+# ================================
+# 🔍 CHECK SERVICE
+# ================================
+
+$serviceName = "cloudflared"
+
+$service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+
+if ($service) {
+    Write-Host "⚠️ Service 'cloudflared' already exists (Status: $($service.Status))" -ForegroundColor Yellow
+
+    $choice = Read-Host "Do you want to reinstall service? (y/n)"
+    if ($choice -ne "y") {
+        Write-Host "Skipping service installation..."
+        exit
     }
+
+    # stop & delete existing service
+    Write-Host "Removing existing service..." -ForegroundColor Yellow
+    sc.exe stop $serviceName | Out-Null
+    sc.exe delete $serviceName | Out-Null
+    Start-Sleep -Seconds 2
 }
+
+# ================================
+# 🚀 INSTALL SERVICE
+# ================================
+
+try {
+    Write-Host "Installing cloudflared service..." -ForegroundColor Cyan
+
+    & $cloudflaredPath service install
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "Service installation failed"
+    }
+
+    Write-Host "✅ Service installed successfully!" -ForegroundColor Green
+}
+catch {
+    Write-Host "❌ Failed to install service" -ForegroundColor Red
+    Write-Host $_.Exception.Message
+    exit 1
+}
+
+# ================================
+# 🧠 DONE
+# ================================
+
+Write-Host "=====================================" -ForegroundColor Green
+Write-Host " Installation Complete" -ForegroundColor Green
+Write-Host "=====================================" -ForegroundColor Green
