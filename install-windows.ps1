@@ -14,16 +14,67 @@ if (-not $PSVersionTable) {
     exit
 }
 
-if (-not ([Security.Principal.WindowsPrincipal] 
-    [Security.Principal.WindowsIdentity]::GetCurrent()
-).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Write-Host "Run as Administrator!" -ForegroundColor Red
-    exit 1
-}
-
 # 🔒 TLS fix
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
+# ================================
+# 🔥 CHECK ADMIN
+# ================================
+$isAdmin = ([Security.Principal.WindowsPrincipal] `
+    [Security.Principal.WindowsIdentity]::GetCurrent()
+).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+if (-not $isAdmin) {
+    Write-Host "❌ Harus dijalankan sebagai Administrator!" -ForegroundColor Red
+    Write-Host "👉 Klik kanan → Run as Administrator" -ForegroundColor Yellow
+    exit 1
+}
+
+# ================================
+# 🔐 VERIFY SIGNATURE FUNCTION
+# ================================
+function Verify-BinarySignature {
+    param([string]$filePath)
+
+    if (!(Test-Path $filePath)) {
+        throw "File tidak ditemukan untuk verifikasi"
+    }
+
+    $signature = Get-AuthenticodeSignature $filePath
+
+    if ($signature.Status -ne "Valid") {
+        throw "Signature tidak valid! Status: $($signature.Status)"
+    }
+
+    Write-Host "✅ Signature valid: $($signature.SignerCertificate.Subject)" -ForegroundColor Green
+}
+
+# ================================
+# 🔐 OPTIONAL HASH CHECK
+# ================================
+function Verify-Hash {
+    param(
+        [string]$filePath,
+        [string]$expectedHash
+    )
+
+    if (-not $expectedHash) {
+        Write-Host "⚠️ Hash tidak disediakan, skip hash check" -ForegroundColor Yellow
+        return
+    }
+
+    $actualHash = (Get-FileHash $filePath -Algorithm SHA256).Hash
+
+    if ($actualHash -ne $expectedHash) {
+        throw "Hash mismatch! File mungkin sudah dimodifikasi"
+    }
+
+    Write-Host "✅ Hash verified" -ForegroundColor Green
+}
+
+# ================================
+# 🚀 INSTALL FUNCTION
+# ================================
 function install-connector {
     param([string]$token)
 
@@ -35,24 +86,20 @@ function install-connector {
     $installDir = "$env:ProgramFiles\cloudflared"
     $path = "$installDir\cloudflared.exe"
 
-    # ================================
-    # 1. Pastikan folder ada
-    # ================================
+    # 1. Ensure directory
     if (!(Test-Path $installDir)) {
         Write-Host "Membuat directory install..." -ForegroundColor Cyan
         New-Item -ItemType Directory -Force -Path $installDir | Out-Null
     }
 
-    # ================================
-    # 2. Install cloudflared kalau belum ada
-    # ================================
+    # 2. Install kalau belum ada
     if (Test-Path $path) {
         Write-Host "Cloudflared sudah ada, skip download. Langsung gass!" -ForegroundColor Yellow
     } else {
-        Write-Host "Gass download cloudflared terbaru..." -ForegroundColor Cyan
+        Write-Host "Download cloudflared terbaru..." -ForegroundColor Cyan
         
         $url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
-        
+
         try {
             Invoke-WebRequest -Uri $url -OutFile $path -UseBasicParsing -ErrorAction Stop
             Write-Host "✅ Download selesai!" -ForegroundColor Green
@@ -64,7 +111,21 @@ function install-connector {
     }
 
     # ================================
-    # 3. Install / reinstall service
+    # 🔐 VERIFY BINARY
+    # ================================
+    try {
+        Verify-BinarySignature -filePath $path
+
+        # 🔥 optional (isi kalau mau strict)
+        # Verify-Hash -filePath $path -expectedHash "ISI_HASH_RESMI_DI_SINI"
+    } catch {
+        Write-Host "❌ Verifikasi binary gagal!" -ForegroundColor Red
+        Write-Host $_.Exception.Message
+        exit 1
+    }
+
+    # ================================
+    # 🔧 SERVICE SETUP
     # ================================
     Write-Host "Memasang service JTech Connector..." -ForegroundColor Cyan
 
