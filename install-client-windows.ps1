@@ -1,5 +1,5 @@
 # ================================
-# JTech Panel - Ultimate Installer + Connector
+# JTech Panel - Ultimate Installer + Connector (HMAC)
 # ================================
 
 param(
@@ -8,14 +8,9 @@ param(
     [string]$projectId
 )
 
-# 🔥 Relaunch kalau dari CMD
-if (-not $PSVersionTable) {
-    Write-Host "Re-launching in PowerShell..." -ForegroundColor Yellow
-    powershell -ExecutionPolicy Bypass -File "%~f0" -token "%token%" -projectId "%projectId%"
-    exit
-}
-
-# 🔒 TLS fix
+# ================================
+# 🔒 TLS
+# ================================
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 # ================================
@@ -23,17 +18,6 @@ if (-not $PSVersionTable) {
 # ================================
 $MAX_RETRY = 3
 $CHUNK_SIZE = 5MB
-$LICENSE_PUBLIC_KEY = @"
------BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1MEbxWiu5c0DSnp6Y8ha
-nrQaXqeclNUdl5XUtC78+DSnO1WrgvmeiNiliiQIV6t4fPtRi1AOdHtyN9FezcTt
-sxs/s1A6GVlYHA3Ed+whMf1/1PUhCaj5luinO5S6bG8tPjT4SZ0SaA7vnpFcwCMe
-ccqsKncZ/3UKYA0rL+kKlcBKwbZ1FGZr+ths5acqeruErOBEEo2FDkZY9X7rIs/J
-EHgCsVk2V1+gWUyPuqMM09dHu9TpuB3OzkvzY5avH1LqTUCPHCrMp8/FRQBkJkN3
-xr0QLvViGXPMOEG7WYaTkKRGbzDv9mX14TF8O888tbyubOMJr2NtJawZ4hWcC/kZ
-hQIDAQAB
------END PUBLIC KEY-----
-"@
 
 # ================================
 # 🔥 ADMIN CHECK
@@ -59,19 +43,7 @@ function Select-InstallDirectory {
 }
 
 # ================================
-# 🔐 VERIFY SIGNATURE
-# ================================
-function Verify-BinarySignature {
-    param([string]$filePath)
-
-    $sig = Get-AuthenticodeSignature $filePath
-    if ($sig.Status -ne "Valid") {
-        throw "Signature tidak valid!"
-    }
-}
-
-# ================================
-# 🔐 VERIFY HASH
+# 🔐 VERIFY HASH FILE
 # ================================
 function Verify-Hash {
     param($file, $hash)
@@ -85,28 +57,41 @@ function Verify-Hash {
 }
 
 # ================================
-# 🔐 VERIFY MANIFEST SIGNATURE
+# 🔐 VERIFY BINARY SIGNATURE
+# ================================
+function Verify-BinarySignature {
+    param([string]$filePath)
+
+    $sig = Get-AuthenticodeSignature $filePath
+    if ($sig.Status -ne "Valid") {
+        throw "Signature tidak valid!"
+    }
+}
+
+# ================================
+# 🔐 VERIFY HMAC SIGNATURE
 # ================================
 function Verify-ManifestSignature {
-    param($data, $signature)
+    param($data, $signature, $secret)
 
     try {
-        $rsa = New-Object System.Security.Cryptography.RSACryptoServiceProvider
-        $rsa.FromXmlString($LICENSE_PUBLIC_KEY)
+        $hmac = New-Object System.Security.Cryptography.HMACSHA256
+        $hmac.Key = [System.Text.Encoding]::UTF8.GetBytes($secret)
 
         $bytes = [System.Text.Encoding]::UTF8.GetBytes($data)
-        $sigBytes = [Convert]::FromBase64String($signature)
+        $hashBytes = $hmac.ComputeHash($bytes)
 
-        $valid = $rsa.VerifyData($bytes, "SHA256", $sigBytes)
+        $computed = ([BitConverter]::ToString($hashBytes)) -replace "-", ""
+        $computed = $computed.ToLower()
 
-        if (-not $valid) {
-            throw "Signature manifest tidak valid!"
+        if ($computed -ne $signature.ToLower()) {
+            throw "Signature tidak valid!"
         }
 
-        Write-Host "✅ Manifest signature valid"
+        Write-Host "✅ Signature valid (HMAC)" -ForegroundColor Green
     }
     catch {
-        Write-Host "❌ Signature verification gagal"
+        Write-Host "❌ Signature verification gagal" -ForegroundColor Red
         Write-Host $_.Exception.Message
         exit 1
     }
@@ -116,23 +101,32 @@ function Verify-ManifestSignature {
 # 🌐 LICENSE API
 # ================================
 function Get-LicenseManifest {
-    param($projectId)
+    param($projectId, $token)
+
+    Write-Host "🔐 Validating license..." -ForegroundColor Cyan
 
     $res = Invoke-RestMethod -Uri "https://api-lisensi.jtechpanel.dpdns.org/api/v1/validate-manifest" -Method POST -Body @{
         project_id = $projectId
+        token = $token
     }
 
     if (-not $res.valid) {
         throw "License invalid"
     }
 
-    Verify-ManifestSignature -data ($res.file_manifest | ConvertTo-Json -Depth 10) -signature $res.signature
+    # 🔥 ambil secret dari server (per-license)
+    $secret = $res.client_secret
+
+    # 🔥 JSON HARUS CONSISTENT
+    $data = ($res.file_manifest | ConvertTo-Json -Depth 10 -Compress)
+
+    Verify-ManifestSignature -data $data -signature $res.signature -secret $secret
 
     return $res.file_manifest
 }
 
 # ================================
-# 🔁 DOWNLOAD (RESUME + PROGRESS)
+# 🔁 DOWNLOAD FILE (RESUME)
 # ================================
 function Download-File {
     param($url, $output)
@@ -255,7 +249,7 @@ New-Item -ItemType Directory -Force -Path $downloadDir | Out-Null
 
 $installDir = Select-InstallDirectory
 
-$manifest = Get-LicenseManifest -projectId $projectId
+$manifest = Get-LicenseManifest -projectId $projectId -token $token
 
 Download-AllFiles -manifest $manifest -dir $downloadDir
 
