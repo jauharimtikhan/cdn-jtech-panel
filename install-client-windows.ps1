@@ -90,17 +90,26 @@ function Verify-Hash {
 function Verify-ManifestSignature {
     param($data, $signature)
 
-    $rsa = [System.Security.Cryptography.RSA]::Create()
-    $rsa.ImportFromPem($LICENSE_PUBLIC_KEY)
+    try {
+        $rsa = New-Object System.Security.Cryptography.RSACryptoServiceProvider
+        $rsa.FromXmlString($LICENSE_PUBLIC_KEY)
 
-    $bytes = [System.Text.Encoding]::UTF8.GetBytes($data)
-    $sigBytes = [Convert]::FromBase64String($signature)
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($data)
+        $sigBytes = [Convert]::FromBase64String($signature)
 
-    if (-not $rsa.VerifyData($bytes, $sigBytes, [System.Security.Cryptography.HashAlgorithmName]::SHA256, [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)) {
-        throw "Manifest signature invalid!"
+        $valid = $rsa.VerifyData($bytes, "SHA256", $sigBytes)
+
+        if (-not $valid) {
+            throw "Signature manifest tidak valid!"
+        }
+
+        Write-Host "✅ Manifest signature valid"
     }
-
-    Write-Host "✅ Manifest valid"
+    catch {
+        Write-Host "❌ Signature verification gagal"
+        Write-Host $_.Exception.Message
+        exit 1
+    }
 }
 
 # ================================
