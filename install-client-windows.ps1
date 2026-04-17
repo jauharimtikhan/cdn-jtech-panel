@@ -1,4 +1,4 @@
-# ================================
+﻿# ================================
 # JTech Panel - Ultimate Installer + Connector (HMAC HARDENED)
 # ================================
 
@@ -11,28 +11,28 @@ param(
 $ErrorActionPreference = "Stop"
 
 # ================================
-# 🔒 TLS
+# TLS
 # ================================
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 # ================================
-# 🔐 CONFIG
+# CONFIG
 # ================================
 $MAX_RETRY = 3
 $CHUNK_SIZE = 5MB
 
 # ================================
-# 🔥 ADMIN CHECK
+# ADMIN CHECK
 # ================================
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
 if (-not $isAdmin) {
-    Write-Host "❌ Run as Administrator!" -ForegroundColor Red
+    Write-Host "Run as Administrator!" -ForegroundColor Red
     exit 1
 }
 
 # ================================
-# 📁 SELECT DIR
+# SELECT DIR
 # ================================
 function Select-InstallDirectory {
     Add-Type -AssemblyName System.Windows.Forms
@@ -46,7 +46,7 @@ function Select-InstallDirectory {
 }
 
 # ================================
-# 🔐 VERIFY HASH
+# VERIFY HASH
 # ================================
 function Verify-Hash {
     param($file, $hash)
@@ -60,7 +60,7 @@ function Verify-Hash {
 }
 
 # ================================
-# 🔐 VERIFY EXE SIGNATURE
+# VERIFY EXE SIGNATURE
 # ================================
 function Verify-BinarySignature {
     param($filePath)
@@ -72,7 +72,7 @@ function Verify-BinarySignature {
 }
 
 # ================================
-# 🔐 VERIFY HMAC
+# VERIFY HMAC
 # ================================
 function Verify-ManifestSignature {
     param($data, $signature, $secret)
@@ -94,22 +94,22 @@ function Verify-ManifestSignature {
         throw "Invalid manifest signature"
     }
 
-    Write-Host "✅ Signature verified" -ForegroundColor Green
+    Write-Host "Signature verified" -ForegroundColor Green
 }
 
 # ================================
-# 🌐 LICENSE API
+# LICENSE API
 # ================================
 function Get-LicenseManifest {
     param($projectId, $token)
 
-    Write-Host "🔐 Validating license..." -ForegroundColor Cyan
+    Write-Host "Validating license..." -ForegroundColor Cyan
 
     try {
         $body = @{
             project_id = $projectId
             token      = $token
-        } | ConvertTo-Json -Compress # 🔥 FIX: Convert ke JSON
+        } | ConvertTo-Json -Compress
 
         $res = Invoke-RestMethod -Uri "https://api-lisensi.jtechpanel.dpdns.org/api/v1/validate-manifest" -Method POST -Body $body -ContentType "application/json"
     }
@@ -137,7 +137,7 @@ function Get-LicenseManifest {
 }
 
 # ================================
-# 🔁 DOWNLOAD (RESUME)
+# DOWNLOAD (RESUME)
 # ================================
 function Download-File {
     param($url, $output)
@@ -147,7 +147,7 @@ function Download-File {
 
     while ($retry -lt $MAX_RETRY) {
         try {
-            Write-Host "⬇️ Downloading: $url"
+            Write-Host "Downloading: $url"
 
             $start = 0
             if (Test-Path $temp) {
@@ -163,8 +163,6 @@ function Download-File {
             }
 
             $stream = $res.GetResponseStream()
-            
-            # 🔥 FIX: Tambah explicit 'Write' access biar gak ArgumentException
             $fs = [System.IO.File]::Open($temp, 'Append', 'Write')
 
             $buffer = New-Object byte[] $CHUNK_SIZE
@@ -176,14 +174,14 @@ function Download-File {
             $fs.Close()
             Rename-Item $temp $output -Force
 
-            Write-Host "✅ Download complete"
+            Write-Host "Download complete"
             return
         }
         catch {
-            if ($null -ne $fs) { $fs.Close() } # Pastikan memory file di-release kalau error
-            
+            if ($null -ne $fs) { $fs.Close() }
+
             $retry++
-            Write-Host "⚠️ Retry $retry/$MAX_RETRY"
+            Write-Host "Retry $retry/$MAX_RETRY"
 
             if ($retry -ge $MAX_RETRY) {
                 throw "Download failed: $url"
@@ -193,7 +191,7 @@ function Download-File {
 }
 
 # ================================
-# 📦 PROCESS FILE
+# PROCESS FILE
 # ================================
 function Process-Files {
     param($manifest, $downloadDir, $installDir)
@@ -219,7 +217,7 @@ function Process-Files {
 }
 
 # ================================
-# 🚀 CONNECTOR
+# CONNECTOR
 # ================================
 function Install-Connector {
     param($token)
@@ -232,7 +230,7 @@ function Install-Connector {
     }
 
     if (!(Test-Path $path)) {
-        Write-Host "⬇️ Download cloudflared..."
+        Write-Host "Download cloudflared..."
         Invoke-WebRequest "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile $path
     }
 
@@ -246,11 +244,11 @@ function Install-Connector {
 
     & $path service install $token
 
-    Write-Host "✅ Connector installed"
+    Write-Host "Connector installed"
 }
 
 # ================================
-# 🚀 MAIN
+# MAIN
 # ================================
 
 try {
@@ -272,10 +270,10 @@ try {
 
     Install-Connector -token $token
 
-    Write-Host "🎉 INSTALL COMPLETE BRE!" -ForegroundColor Green
+    Write-Host "INSTALL COMPLETE!" -ForegroundColor Green
 }
 catch {
-    Write-Host "❌ INSTALL FAILED" -ForegroundColor Red
+    Write-Host "INSTALL FAILED" -ForegroundColor Red
     Write-Host $_.Exception.Message
     exit 1
 }
