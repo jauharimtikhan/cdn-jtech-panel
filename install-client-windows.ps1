@@ -105,12 +105,12 @@ function Get-LicenseManifest {
     Write-Host "🔐 Validating license..." -ForegroundColor Cyan
 
     try {
-        $res = Invoke-RestMethod -Uri "https://api-lisensi.jtechpanel.dpdns.org/api/v1/validate-manifest" `
-            -Method POST `
-            -Body @{
-                project_id = $projectId
-                token = $token
-            }
+        $body = @{
+            project_id = $projectId
+            token = $token
+        }
+
+        $res = Invoke-RestMethod -Uri "https://api-lisensi.jtechpanel.dpdns.org/api/v1/validate-manifest" -Method POST -Body $body
     }
     catch {
         throw "API request failed: $($_.Exception.Message)"
