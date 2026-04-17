@@ -1,5 +1,5 @@
 # ================================
-# JTech Panel - Ultimate Installer
+# JTech Panel - Ultimate Installer + Connector
 # ================================
 
 param(
@@ -8,6 +8,14 @@ param(
     [string]$projectId
 )
 
+# 🔥 Relaunch kalau dari CMD
+if (-not $PSVersionTable) {
+    Write-Host "Re-launching in PowerShell..." -ForegroundColor Yellow
+    powershell -ExecutionPolicy Bypass -File "%~f0" -token "%token%" -projectId "%projectId%"
+    exit
+}
+
+# 🔒 TLS fix
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 # ================================
@@ -15,7 +23,17 @@ param(
 # ================================
 $MAX_RETRY = 3
 $CHUNK_SIZE = 5MB
-$LICENSE_PUBLIC_KEY = "-----BEGIN PUBLIC KEY-----YOUR_KEY-----END PUBLIC KEY-----"
+$LICENSE_PUBLIC_KEY = @"
+-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1MEbxWiu5c0DSnp6Y8ha
+nrQaXqeclNUdl5XUtC78+DSnO1WrgvmeiNiliiQIV6t4fPtRi1AOdHtyN9FezcTt
+sxs/s1A6GVlYHA3Ed+whMf1/1PUhCaj5luinO5S6bG8tPjT4SZ0SaA7vnpFcwCMe
+ccqsKncZ/3UKYA0rL+kKlcBKwbZ1FGZr+ths5acqeruErOBEEo2FDkZY9X7rIs/J
+EHgCsVk2V1+gWUyPuqMM09dHu9TpuB3OzkvzY5avH1LqTUCPHCrMp8/FRQBkJkN3
+xr0QLvViGXPMOEG7WYaTkKRGbzDv9mX14TF8O888tbyubOMJr2NtJawZ4hWcC/kZ
+hQIDAQAB
+-----END PUBLIC KEY-----
+"@
 
 # ================================
 # 🔥 ADMIN CHECK
@@ -23,7 +41,7 @@ $LICENSE_PUBLIC_KEY = "-----BEGIN PUBLIC KEY-----YOUR_KEY-----END PUBLIC KEY----
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
 if (-not $isAdmin) {
-    Write-Host "Run as Administrator!" -ForegroundColor Red
+    Write-Host "❌ Harus dijalankan sebagai Administrator!" -ForegroundColor Red
     exit 1
 }
 
@@ -33,8 +51,6 @@ if (-not $isAdmin) {
 function Select-InstallDirectory {
     Add-Type -AssemblyName System.Windows.Forms
     $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
-    $dialog.Description = "Pilih folder install"
-
     if ($dialog.ShowDialog() -eq "OK") {
         return $dialog.SelectedPath
     } else {
@@ -43,40 +59,57 @@ function Select-InstallDirectory {
 }
 
 # ================================
-# 🔐 VERIFY SIGNED MANIFEST
+# 🔐 VERIFY SIGNATURE
+# ================================
+function Verify-BinarySignature {
+    param([string]$filePath)
+
+    $sig = Get-AuthenticodeSignature $filePath
+    if ($sig.Status -ne "Valid") {
+        throw "Signature tidak valid!"
+    }
+}
+
+# ================================
+# 🔐 VERIFY HASH
+# ================================
+function Verify-Hash {
+    param($file, $hash)
+
+    if (-not $hash) { return }
+
+    $h = (Get-FileHash $file -Algorithm SHA256).Hash
+    if ($h -ne $hash) {
+        throw "Hash mismatch!"
+    }
+}
+
+# ================================
+# 🔐 VERIFY MANIFEST SIGNATURE
 # ================================
 function Verify-ManifestSignature {
     param($data, $signature)
 
-    try {
-        $rsa = [System.Security.Cryptography.RSA]::Create()
-        $rsa.ImportFromPem($LICENSE_PUBLIC_KEY)
+    $rsa = [System.Security.Cryptography.RSA]::Create()
+    $rsa.ImportFromPem($LICENSE_PUBLIC_KEY)
 
-        $bytes = [System.Text.Encoding]::UTF8.GetBytes($data)
-        $sigBytes = [Convert]::FromBase64String($signature)
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($data)
+    $sigBytes = [Convert]::FromBase64String($signature)
 
-        $valid = $rsa.VerifyData($bytes, $sigBytes, [System.Security.Cryptography.HashAlgorithmName]::SHA256, [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
-
-        if (-not $valid) {
-            throw "Signature manifest tidak valid!"
-        }
-
-        Write-Host "✅ Manifest signature valid" -ForegroundColor Green
+    if (-not $rsa.VerifyData($bytes, $sigBytes, [System.Security.Cryptography.HashAlgorithmName]::SHA256, [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)) {
+        throw "Manifest signature invalid!"
     }
-    catch {
-        Write-Host "❌ Signature verification gagal" -ForegroundColor Red
-        exit 1
-    }
+
+    Write-Host "✅ Manifest valid"
 }
 
 # ================================
 # 🌐 LICENSE API
 # ================================
 function Get-LicenseManifest {
-    param($token, $projectId)
+    param($projectId)
 
     $res = Invoke-RestMethod -Uri "https://api-lisensi.jtechpanel.dpdns.org/api/v1/validate-manifest" -Method POST -Body @{
-        token = $token
         project_id = $projectId
     }
 
@@ -84,14 +117,13 @@ function Get-LicenseManifest {
         throw "License invalid"
     }
 
-    # verify signature
     Verify-ManifestSignature -data ($res.file_manifest | ConvertTo-Json -Depth 10) -signature $res.signature
 
     return $res.file_manifest
 }
 
 # ================================
-# 🔁 SMART DOWNLOAD (RESUME + RETRY + PROGRESS)
+# 🔁 DOWNLOAD (RESUME + PROGRESS)
 # ================================
 function Download-File {
     param($url, $output)
@@ -101,20 +133,13 @@ function Download-File {
 
     while ($retry -lt $MAX_RETRY) {
         try {
-            $start = 0
-            if (Test-Path $temp) {
-                $start = (Get-Item $temp).Length
-            }
+            $start = (Test-Path $temp) ? (Get-Item $temp).Length : 0
 
             $req = [System.Net.HttpWebRequest]::Create($url)
-            if ($start -gt 0) {
-                $req.AddRange($start)
-                Write-Host "🔄 Resume dari $start byte"
-            }
+            if ($start -gt 0) { $req.AddRange($start) }
 
             $res = $req.GetResponse()
             $stream = $res.GetResponseStream()
-
             $fs = [System.IO.File]::Open($temp, 'Append')
 
             $buffer = New-Object byte[] $CHUNK_SIZE
@@ -124,23 +149,16 @@ function Download-File {
                 $fs.Write($buffer, 0, $read)
                 $total += $read
 
-                Write-Progress -Activity "Downloading $(Split-Path $output -Leaf)" `
-                    -Status "$([math]::Round($total/1MB,2)) MB downloaded"
+                Write-Progress -Activity "Downloading" -Status "$([math]::Round($total/1MB,2)) MB"
             }
 
             $fs.Close()
             Rename-Item $temp $output -Force
-
-            Write-Host "✅ Download selesai"
             return
         }
         catch {
             $retry++
-            Write-Host "⚠️ Retry $retry/$MAX_RETRY..."
-
-            if ($retry -ge $MAX_RETRY) {
-                throw "Download gagal total"
-            }
+            if ($retry -ge $MAX_RETRY) { throw }
         }
     }
 }
@@ -158,40 +176,16 @@ function Download-AllFiles {
 
         $jobs += Start-Job -ScriptBlock {
             param($url, $output)
-
             Import-Module BitsTransfer
-
             Start-BitsTransfer -Source $url -Destination $output
-
         } -ArgumentList $file.url, $output
     }
 
-    Write-Host "⚡ Download parallel berjalan..."
-
     $jobs | ForEach-Object { Wait-Job $_ }
-
-    Write-Host "✅ Semua download selesai"
 }
 
 # ================================
-# 🔐 HASH CHECK
-# ================================
-function Verify-Hash {
-    param($file, $hash)
-
-    if (-not $hash) { return }
-
-    $h = (Get-FileHash $file -Algorithm SHA256).Hash
-
-    if ($h -ne $hash) {
-        throw "Hash mismatch!"
-    }
-
-    Write-Host "✅ Hash OK"
-}
-
-# ================================
-# 🚀 PROCESS FILE
+# 📦 PROCESS FILE
 # ================================
 function Process-Files {
     param($manifest, $downloadDir, $installDir)
@@ -201,14 +195,43 @@ function Process-Files {
 
         Verify-Hash $path $file.hash
 
+        if ($file.type -eq "exe") {
+            Verify-BinarySignature $path
+            Start-Process $path -Wait
+        }
+
         if ($file.type -eq "zip") {
             Expand-Archive $path -DestinationPath $installDir -Force
         }
-
-        if ($file.type -eq "exe") {
-            Start-Process $path -Wait
-        }
     }
+}
+
+# ================================
+# 🚀 CONNECTOR INSTALL
+# ================================
+function install-connector {
+    param($token)
+
+    $installDir = "$env:ProgramFiles\cloudflared"
+    $path = "$installDir\cloudflared.exe"
+
+    if (!(Test-Path $installDir)) {
+        New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+    }
+
+    if (!(Test-Path $path)) {
+        Invoke-WebRequest "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile $path
+    }
+
+    Verify-BinarySignature $path
+
+    $service = Get-Service "cloudflared" -ErrorAction SilentlyContinue
+    if ($service) {
+        & $path service uninstall | Out-Null
+        Start-Sleep 2
+    }
+
+    & $path service install $token
 }
 
 # ================================
@@ -220,12 +243,10 @@ New-Item -ItemType Directory -Force -Path $downloadDir | Out-Null
 
 $installDir = Select-InstallDirectory
 
-$manifest = Get-LicenseManifest -token $token -projectId $projectId
+$manifest = Get-LicenseManifest -projectId $projectId
 
-# ⚡ Multi-thread download
 Download-AllFiles -manifest $manifest -dir $downloadDir
 
-# fallback individual (resume)
 foreach ($file in $manifest) {
     $path = Join-Path $downloadDir $file.name
     if (!(Test-Path $path)) {
@@ -235,4 +256,6 @@ foreach ($file in $manifest) {
 
 Process-Files -manifest $manifest -downloadDir $downloadDir -installDir $installDir
 
-Write-Host "🎉 INSTALL SELESAI BRE!" -ForegroundColor Green
+install-connector -token $token
+
+Write-Host "🎉 INSTALL COMPLETE BRE!" -ForegroundColor Green
