@@ -3,7 +3,7 @@
 # ================================
 
 param(
-    [Parameter(Mandatory=$true)]
+    [Parameter(Mandatory = $true)]
     [string]$token,
     [string]$projectId
 )
@@ -39,7 +39,8 @@ function Select-InstallDirectory {
     $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
     if ($dialog.ShowDialog() -eq "OK") {
         return $dialog.SelectedPath
-    } else {
+    }
+    else {
         throw "User cancelled install"
     }
 }
@@ -107,10 +108,10 @@ function Get-LicenseManifest {
     try {
         $body = @{
             project_id = $projectId
-            token = $token
-        }
+            token      = $token
+        } | ConvertTo-Json -Compress # 🔥 FIX: Convert ke JSON
 
-        $res = Invoke-RestMethod -Uri "https://api-lisensi.jtechpanel.dpdns.org/api/v1/validate-manifest" -Method POST -Body $body
+        $res = Invoke-RestMethod -Uri "https://api-lisensi.jtechpanel.dpdns.org/api/v1/validate-manifest" -Method POST -Body $body -ContentType "application/json"
     }
     catch {
         throw "API request failed: $($_.Exception.Message)"
@@ -162,7 +163,9 @@ function Download-File {
             }
 
             $stream = $res.GetResponseStream()
-            $fs = [System.IO.File]::Open($temp, 'Append')
+            
+            # 🔥 FIX: Tambah explicit 'Write' access biar gak ArgumentException
+            $fs = [System.IO.File]::Open($temp, 'Append', 'Write')
 
             $buffer = New-Object byte[] $CHUNK_SIZE
 
@@ -177,6 +180,8 @@ function Download-File {
             return
         }
         catch {
+            if ($null -ne $fs) { $fs.Close() } # Pastikan memory file di-release kalau error
+            
             $retry++
             Write-Host "⚠️ Retry $retry/$MAX_RETRY"
 
@@ -216,7 +221,7 @@ function Process-Files {
 # ================================
 # 🚀 CONNECTOR
 # ================================
-function install-connector {
+function Install-Connector {
     param($token)
 
     $installDir = "$env:ProgramFiles\cloudflared"
@@ -265,7 +270,7 @@ try {
 
     Process-Files -manifest $manifest -downloadDir $downloadDir -installDir $installDir
 
-    install-connector -token $token
+    Install-Connector -token $token
 
     Write-Host "🎉 INSTALL COMPLETE BRE!" -ForegroundColor Green
 }
