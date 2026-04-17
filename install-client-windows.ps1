@@ -134,9 +134,9 @@ function Download-File {
     while ($retry -lt $MAX_RETRY) {
         try {
             $start = 0
-if (Test-Path $temp) {
-    $start = (Get-Item $temp).Length
-}
+            if (Test-Path $temp) {
+                $start = (Get-Item $temp).Length
+            }
 
             $req = [System.Net.HttpWebRequest]::Create($url)
             if ($start -gt 0) { $req.AddRange($start) }
