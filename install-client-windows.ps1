@@ -114,10 +114,8 @@ function Get-LicenseManifest {
         throw "License invalid"
     }
 
-    # 🔥 ambil secret dari server (per-license)
     $secret = $res.client_secret
 
-    # 🔥 JSON HARUS CONSISTENT
     $data = ($res.file_manifest | ConvertTo-Json -Depth 10 -Compress)
 
     Verify-ManifestSignature -data $data -signature $res.signature -secret $secret
