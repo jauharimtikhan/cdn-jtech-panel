@@ -5,13 +5,14 @@
 param(
     [Parameter(Mandatory=$true)]
     [string]$token,
-    [string]$projectId
+    [string]$projectId,
+    [string]$manifestId,
 )
 
 # 🔥 Relaunch kalau dari CMD
 if (-not $PSVersionTable) {
     Write-Host "Re-launching in PowerShell..." -ForegroundColor Yellow
-    powershell -ExecutionPolicy Bypass -File "%~f0" -token "%token%" -projectId "%projectId%"
+    powershell -ExecutionPolicy Bypass -File "%~f0" -token "%token%" -projectId "%projectId%" -manifestId "%manifestId%"
     exit
 }
 
@@ -107,10 +108,11 @@ function Verify-ManifestSignature {
 # 🌐 LICENSE API
 # ================================
 function Get-LicenseManifest {
-    param($projectId)
+    param($projectId, $manifestId)
 
     $res = Invoke-RestMethod -Uri "https://api-lisensi.jtechpanel.dpdns.org/api/v1/validate-manifest" -Method POST -Body @{
-        project_id = $projectId
+        project_id = $projectId,
+        manifest_id = $manifestId
     }
 
     if (-not $res.valid) {
