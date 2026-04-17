@@ -1,5 +1,5 @@
 # ================================
-# JTech Panel - Ultimate Installer + Connector (HMAC)
+# JTech Panel - Ultimate Installer + Connector (HMAC HARDENED)
 # ================================
 
 param(
@@ -7,6 +7,8 @@ param(
     [string]$token,
     [string]$projectId
 )
+
+$ErrorActionPreference = "Stop"
 
 # ================================
 # 🔒 TLS
@@ -25,7 +27,7 @@ $CHUNK_SIZE = 5MB
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
 if (-not $isAdmin) {
-    Write-Host "❌ Harus dijalankan sebagai Administrator!" -ForegroundColor Red
+    Write-Host "❌ Run as Administrator!" -ForegroundColor Red
     exit 1
 }
 
@@ -38,12 +40,12 @@ function Select-InstallDirectory {
     if ($dialog.ShowDialog() -eq "OK") {
         return $dialog.SelectedPath
     } else {
-        exit 1
+        throw "User cancelled install"
     }
 }
 
 # ================================
-# 🔐 VERIFY HASH FILE
+# 🔐 VERIFY HASH
 # ================================
 function Verify-Hash {
     param($file, $hash)
@@ -52,49 +54,46 @@ function Verify-Hash {
 
     $h = (Get-FileHash $file -Algorithm SHA256).Hash
     if ($h -ne $hash) {
-        throw "Hash mismatch!"
+        throw "Hash mismatch: $file"
     }
 }
 
 # ================================
-# 🔐 VERIFY BINARY SIGNATURE
+# 🔐 VERIFY EXE SIGNATURE
 # ================================
 function Verify-BinarySignature {
-    param([string]$filePath)
+    param($filePath)
 
     $sig = Get-AuthenticodeSignature $filePath
     if ($sig.Status -ne "Valid") {
-        throw "Signature tidak valid!"
+        throw "Invalid binary signature: $filePath"
     }
 }
 
 # ================================
-# 🔐 VERIFY HMAC SIGNATURE
+# 🔐 VERIFY HMAC
 # ================================
 function Verify-ManifestSignature {
     param($data, $signature, $secret)
 
-    try {
-        $hmac = New-Object System.Security.Cryptography.HMACSHA256
-        $hmac.Key = [System.Text.Encoding]::UTF8.GetBytes($secret)
-
-        $bytes = [System.Text.Encoding]::UTF8.GetBytes($data)
-        $hashBytes = $hmac.ComputeHash($bytes)
-
-        $computed = ([BitConverter]::ToString($hashBytes)) -replace "-", ""
-        $computed = $computed.ToLower()
-
-        if ($computed -ne $signature.ToLower()) {
-            throw "Signature tidak valid!"
-        }
-
-        Write-Host "✅ Signature valid (HMAC)" -ForegroundColor Green
+    if (-not $secret) {
+        throw "Missing client secret"
     }
-    catch {
-        Write-Host "❌ Signature verification gagal" -ForegroundColor Red
-        Write-Host $_.Exception.Message
-        exit 1
+
+    $hmac = New-Object System.Security.Cryptography.HMACSHA256
+    $hmac.Key = [Text.Encoding]::UTF8.GetBytes($secret)
+
+    $bytes = [Text.Encoding]::UTF8.GetBytes($data)
+    $hashBytes = $hmac.ComputeHash($bytes)
+
+    $computed = ([BitConverter]::ToString($hashBytes)) -replace "-", ""
+    $computed = $computed.ToLower()
+
+    if ($computed -ne $signature.ToLower()) {
+        throw "Invalid manifest signature"
     }
+
+    Write-Host "✅ Signature verified" -ForegroundColor Green
 }
 
 # ================================
@@ -105,26 +104,39 @@ function Get-LicenseManifest {
 
     Write-Host "🔐 Validating license..." -ForegroundColor Cyan
 
-    $res = Invoke-RestMethod -Uri "https://api-lisensi.jtechpanel.dpdns.org/api/v1/validate-manifest" -Method POST -Body @{
-        project_id = $projectId
-        token = $token
+    try {
+        $res = Invoke-RestMethod -Uri "https://api-lisensi.jtechpanel.dpdns.org/api/v1/validate-manifest" `
+            -Method POST `
+            -Body @{
+                project_id = $projectId
+                token = $token
+            }
+    }
+    catch {
+        throw "API request failed: $($_.Exception.Message)"
     }
 
     if (-not $res.valid) {
         throw "License invalid"
     }
 
-    $secret = $res.client_secret
+    if (-not $res.client_secret) {
+        throw "Missing client secret"
+    }
+
+    if (-not $res.file_manifest) {
+        throw "Empty manifest"
+    }
 
     $data = ($res.file_manifest | ConvertTo-Json -Depth 10 -Compress)
 
-    Verify-ManifestSignature -data $data -signature $res.signature -secret $secret
+    Verify-ManifestSignature -data $data -signature $res.signature -secret $res.client_secret
 
     return $res.file_manifest
 }
 
 # ================================
-# 🔁 DOWNLOAD FILE (RESUME)
+# 🔁 DOWNLOAD (RESUME)
 # ================================
 function Download-File {
     param($url, $output)
@@ -134,6 +146,8 @@ function Download-File {
 
     while ($retry -lt $MAX_RETRY) {
         try {
+            Write-Host "⬇️ Downloading: $url"
+
             $start = 0
             if (Test-Path $temp) {
                 $start = (Get-Item $temp).Length
@@ -143,49 +157,34 @@ function Download-File {
             if ($start -gt 0) { $req.AddRange($start) }
 
             $res = $req.GetResponse()
+            if ($res.StatusCode -ne 200 -and $res.StatusCode -ne 206) {
+                throw "HTTP Error: $($res.StatusCode)"
+            }
+
             $stream = $res.GetResponseStream()
             $fs = [System.IO.File]::Open($temp, 'Append')
 
             $buffer = New-Object byte[] $CHUNK_SIZE
-            $total = $start
 
             while (($read = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
                 $fs.Write($buffer, 0, $read)
-                $total += $read
-
-                Write-Progress -Activity "Downloading" -Status "$([math]::Round($total/1MB,2)) MB"
             }
 
             $fs.Close()
             Rename-Item $temp $output -Force
+
+            Write-Host "✅ Download complete"
             return
         }
         catch {
             $retry++
-            if ($retry -ge $MAX_RETRY) { throw }
+            Write-Host "⚠️ Retry $retry/$MAX_RETRY"
+
+            if ($retry -ge $MAX_RETRY) {
+                throw "Download failed: $url"
+            }
         }
     }
-}
-
-# ================================
-# ⚡ MULTI THREAD DOWNLOAD
-# ================================
-function Download-AllFiles {
-    param($manifest, $dir)
-
-    $jobs = @()
-
-    foreach ($file in $manifest) {
-        $output = Join-Path $dir $file.name
-
-        $jobs += Start-Job -ScriptBlock {
-            param($url, $output)
-            Import-Module BitsTransfer
-            Start-BitsTransfer -Source $url -Destination $output
-        } -ArgumentList $file.url, $output
-    }
-
-    $jobs | ForEach-Object { Wait-Job $_ }
 }
 
 # ================================
@@ -196,6 +195,10 @@ function Process-Files {
 
     foreach ($file in $manifest) {
         $path = Join-Path $downloadDir $file.name
+
+        if (!(Test-Path $path)) {
+            throw "File missing: $path"
+        }
 
         Verify-Hash $path $file.hash
 
@@ -211,7 +214,7 @@ function Process-Files {
 }
 
 # ================================
-# 🚀 CONNECTOR INSTALL
+# 🚀 CONNECTOR
 # ================================
 function install-connector {
     param($token)
@@ -224,6 +227,7 @@ function install-connector {
     }
 
     if (!(Test-Path $path)) {
+        Write-Host "⬇️ Download cloudflared..."
         Invoke-WebRequest "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile $path
     }
 
@@ -236,30 +240,37 @@ function install-connector {
     }
 
     & $path service install $token
+
+    Write-Host "✅ Connector installed"
 }
 
 # ================================
-# 🚀 MAIN FLOW
+# 🚀 MAIN
 # ================================
 
-$downloadDir = "$env:TEMP\jtech"
-New-Item -ItemType Directory -Force -Path $downloadDir | Out-Null
+try {
+    $downloadDir = "$env:TEMP\jtech"
+    New-Item -ItemType Directory -Force -Path $downloadDir | Out-Null
 
-$installDir = Select-InstallDirectory
+    $installDir = Select-InstallDirectory
 
-$manifest = Get-LicenseManifest -projectId $projectId -token $token
+    $manifest = Get-LicenseManifest -projectId $projectId -token $token
 
-Download-AllFiles -manifest $manifest -dir $downloadDir
-
-foreach ($file in $manifest) {
-    $path = Join-Path $downloadDir $file.name
-    if (!(Test-Path $path)) {
-        Download-File $file.url $path
+    foreach ($file in $manifest) {
+        $path = Join-Path $downloadDir $file.name
+        if (!(Test-Path $path)) {
+            Download-File $file.url $path
+        }
     }
+
+    Process-Files -manifest $manifest -downloadDir $downloadDir -installDir $installDir
+
+    install-connector -token $token
+
+    Write-Host "🎉 INSTALL COMPLETE BRE!" -ForegroundColor Green
 }
-
-Process-Files -manifest $manifest -downloadDir $downloadDir -installDir $installDir
-
-install-connector -token $token
-
-Write-Host "🎉 INSTALL COMPLETE BRE!" -ForegroundColor Green
+catch {
+    Write-Host "❌ INSTALL FAILED" -ForegroundColor Red
+    Write-Host $_.Exception.Message
+    exit 1
+}
